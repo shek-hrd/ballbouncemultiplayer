@@ -1,0 +1,438 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Multiplayer Ball Game</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            font-family: Arial, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-height: 100vh;
+            overflow: hidden;
+        }
+        
+        .game-container {
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            border-radius: 15px;
+            padding: 20px;
+            box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.37);
+            border: 1px solid rgba(255, 255, 255, 0.18);
+        }
+        
+        #gameCanvas {
+            border: 2px solid #fff;
+            border-radius: 10px;
+            background: rgba(0, 0, 0, 0.8);
+            display: block;
+            cursor: crosshair;
+        }
+        
+        .info {
+            color: white;
+            text-align: center;
+            margin: 15px 0;
+            font-size: 14px;
+        }
+        
+        .controls {
+            color: white;
+            text-align: center;
+            margin-top: 10px;
+            font-size: 12px;
+            opacity: 0.8;
+        }
+        
+        .player-info {
+            color: white;
+            text-align: center;
+            margin: 10px 0;
+            font-weight: bold;
+        }
+        
+        .status {
+            color: #4ade80;
+            font-size: 12px;
+        }
+        
+        .offline {
+            color: #f87171;
+        }
+        
+        .spawn-instruction {
+            color: #fbbf24;
+            font-size: 14px;
+            font-weight: bold;
+            animation: pulse 2s infinite;
+        }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.7; }
+        }
+    </style>
+</head>
+<body>
+    <div class="game-container">
+        <div class="info">
+            <h2 style="margin: 0 0 10px 0; color: white;">🎮 Multiplayer Ball Arena</h2>
+            <div class="status" id="status">Ready to play!</div>
+        </div>
+        
+        <canvas id="gameCanvas" width="800" height="600"></canvas>
+        
+        <div class="player-info">
+            <div id="playerStatus" class="spawn-instruction">Click anywhere on the arena to spawn your ball!</div>
+            <div>Players Online: <span id="playerCount">0</span></div>
+        </div>
+        
+        <div class="controls">
+            Use WASD or Arrow Keys to move your ball • Balls bounce off walls and each other
+        </div>
+    </div>
+
+    <script>
+        class MultiplayerBallGame {
+            constructor() {
+                this.canvas = document.getElementById('gameCanvas');
+                this.ctx = this.canvas.getContext('2d');
+                this.players = new Map();
+                this.playerId = this.generateId();
+                this.keys = {};
+                this.myPlayer = null;
+                this.hasSpawned = false;
+                
+                // Physics properties
+                this.speed = 4;
+                this.ballRadius = 20;
+                this.friction = 0.98;
+                this.bounceDamping = 0.8;
+                
+                // Colors for different players
+                this.colors = [
+                    '#ff4757', '#2ed573', '#3742fa', '#ffa502',
+                    '#ff6b81', '#70a1ff', '#7bed9f', '#eccc68',
+                    '#ff7675', '#74b9ff', '#00b894', '#fdcb6e'
+                ];
+                
+                this.setupEventListeners();
+                this.setupMockMultiplayer();
+                this.gameLoop();
+                this.updatePlayerCount();
+            }
+            
+            generateId() {
+                return Math.random().toString(36).substr(2, 9);
+            }
+            
+            spawnPlayer(x, y) {
+                const colorIndex = Math.floor(Math.random() * this.colors.length);
+                this.myPlayer = {
+                    id: this.playerId,
+                    x: x,
+                    y: y,
+                    vx: 0,
+                    vy: 0,
+                    color: this.colors[colorIndex],
+                    lastUpdate: Date.now()
+                };
+                
+                this.players.set(this.playerId, this.myPlayer);
+                this.hasSpawned = true;
+                
+                document.getElementById('playerStatus').innerHTML = `Your Ball: <span style="color: ${this.myPlayer.color}">${this.myPlayer.color}</span>`;
+                document.getElementById('playerStatus').className = '';
+                this.updatePlayerCount();
+            }
+            
+            setupMockMultiplayer() {
+                // Add some initial bots
+                setTimeout(() => {
+                    for (let i = 0; i < 2; i++) {
+                        this.addRandomPlayer();
+                    }
+                }, 1000);
+                
+                // Periodically add/remove players
+                setInterval(() => {
+                    if (Math.random() < 0.2 && this.players.size < 8) {
+                        this.addRandomPlayer();
+                    } else if (Math.random() < 0.15 && this.players.size > 3) {
+                        this.removeRandomPlayer();
+                    }
+                }, 4000);
+            }
+            
+            addRandomPlayer() {
+                const id = this.generateId();
+                const colorIndex = Math.floor(Math.random() * this.colors.length);
+                const player = {
+                    id: id,
+                    x: Math.random() * (this.canvas.width - this.ballRadius * 2) + this.ballRadius,
+                    y: Math.random() * (this.canvas.height - this.ballRadius * 2) + this.ballRadius,
+                    vx: (Math.random() - 0.5) * 4,
+                    vy: (Math.random() - 0.5) * 4,
+                    color: this.colors[colorIndex],
+                    isBot: true,
+                    lastUpdate: Date.now()
+                };
+                
+                this.players.set(id, player);
+                this.updatePlayerCount();
+            }
+            
+            removeRandomPlayer() {
+                const botIds = Array.from(this.players.keys()).filter(id => {
+                    const player = this.players.get(id);
+                    return player.isBot && id !== this.playerId;
+                });
+                
+                if (botIds.length > 0) {
+                    const randomId = botIds[Math.floor(Math.random() * botIds.length)];
+                    this.players.delete(randomId);
+                    this.updatePlayerCount();
+                }
+            }
+            
+            updatePlayerCount() {
+                document.getElementById('playerCount').textContent = this.players.size;
+            }
+            
+            setupEventListeners() {
+                // Prevent default behavior for arrow keys and game keys
+                const gameKeys = ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'w', 'a', 's', 'd', 'W', 'A', 'S', 'D'];
+                
+                document.addEventListener('keydown', (e) => {
+                    const key = e.key.toLowerCase();
+                    
+                    // Prevent default behavior for game keys
+                    if (gameKeys.includes(e.key) || gameKeys.includes(key)) {
+                        e.preventDefault();
+                    }
+                    
+                    this.keys[key] = true;
+                }, { passive: false });
+                
+                document.addEventListener('keyup', (e) => {
+                    const key = e.key.toLowerCase();
+                    
+                    // Prevent default behavior for game keys
+                    if (gameKeys.includes(e.key) || gameKeys.includes(key)) {
+                        e.preventDefault();
+                    }
+                    
+                    this.keys[key] = false;
+                }, { passive: false });
+                
+                // Mouse click to spawn player
+                this.canvas.addEventListener('click', (e) => {
+                    if (!this.hasSpawned) {
+                        const rect = this.canvas.getBoundingClientRect();
+                        const x = e.clientX - rect.left;
+                        const y = e.clientY - rect.top;
+                        
+                        // Ensure spawn position is within canvas bounds
+                        const spawnX = Math.max(this.ballRadius, Math.min(this.canvas.width - this.ballRadius, x));
+                        const spawnY = Math.max(this.ballRadius, Math.min(this.canvas.height - this.ballRadius, y));
+                        
+                        this.spawnPlayer(spawnX, spawnY);
+                    }
+                });
+            }
+            
+            updatePlayer() {
+                if (!this.myPlayer) return;
+                
+                let dx = 0, dy = 0;
+                
+                // WASD and Arrow key controls
+                if (this.keys['w'] || this.keys['arrowup']) dy -= this.speed;
+                if (this.keys['s'] || this.keys['arrowdown']) dy += this.speed;
+                if (this.keys['a'] || this.keys['arrowleft']) dx -= this.speed;
+                if (this.keys['d'] || this.keys['arrowright']) dx += this.speed;
+                
+                // Diagonal movement normalization
+                if (dx !== 0 && dy !== 0) {
+                    dx *= 0.707;
+                    dy *= 0.707;
+                }
+                
+                // Apply movement to velocity
+                this.myPlayer.vx += dx * 0.3;
+                this.myPlayer.vy += dy * 0.3;
+                
+                // Apply friction
+                this.myPlayer.vx *= this.friction;
+                this.myPlayer.vy *= this.friction;
+                
+                // Update position
+                this.myPlayer.x += this.myPlayer.vx;
+                this.myPlayer.y += this.myPlayer.vy;
+                
+                // Wall collision with bounce
+                if (this.myPlayer.x - this.ballRadius <= 0 || this.myPlayer.x + this.ballRadius >= this.canvas.width) {
+                    this.myPlayer.vx *= -this.bounceDamping;
+                    this.myPlayer.x = Math.max(this.ballRadius, Math.min(this.canvas.width - this.ballRadius, this.myPlayer.x));
+                }
+                
+                if (this.myPlayer.y - this.ballRadius <= 0 || this.myPlayer.y + this.ballRadius >= this.canvas.height) {
+                    this.myPlayer.vy *= -this.bounceDamping;
+                    this.myPlayer.y = Math.max(this.ballRadius, Math.min(this.canvas.height - this.ballRadius, this.myPlayer.y));
+                }
+                
+                this.myPlayer.lastUpdate = Date.now();
+            }
+            
+            updateBots() {
+                this.players.forEach((player) => {
+                    if (player.isBot) {
+                        // Update position
+                        player.x += player.vx;
+                        player.y += player.vy;
+                        
+                        // Wall collision with bounce
+                        if (player.x - this.ballRadius <= 0 || player.x + this.ballRadius >= this.canvas.width) {
+                            player.vx *= -this.bounceDamping;
+                            player.x = Math.max(this.ballRadius, Math.min(this.canvas.width - this.ballRadius, player.x));
+                        }
+                        
+                        if (player.y - this.ballRadius <= 0 || player.y + this.ballRadius >= this.canvas.height) {
+                            player.vy *= -this.bounceDamping;
+                            player.y = Math.max(this.ballRadius, Math.min(this.canvas.height - this.ballRadius, player.y));
+                        }
+                        
+                        // Apply friction
+                        player.vx *= this.friction;
+                        player.vy *= this.friction;
+                        
+                        // Random impulses
+                        if (Math.random() < 0.005) {
+                            player.vx += (Math.random() - 0.5) * 3;
+                            player.vy += (Math.random() - 0.5) * 3;
+                        }
+                        
+                        player.lastUpdate = Date.now();
+                    }
+                });
+            }
+            
+            handleBallCollisions() {
+                const playersArray = Array.from(this.players.values());
+                
+                for (let i = 0; i < playersArray.length; i++) {
+                    for (let j = i + 1; j < playersArray.length; j++) {
+                        const ball1 = playersArray[i];
+                        const ball2 = playersArray[j];
+                        
+                        const dx = ball2.x - ball1.x;
+                        const dy = ball2.y - ball1.y;
+                        const distance = Math.sqrt(dx * dx + dy * dy);
+                        
+                        if (distance < this.ballRadius * 2) {
+                            // Collision detected
+                            const angle = Math.atan2(dy, dx);
+                            const sin = Math.sin(angle);
+                            const cos = Math.cos(angle);
+                            
+                            // Separate balls
+                            const overlap = this.ballRadius * 2 - distance;
+                            const separateX = (overlap / 2) * cos;
+                            const separateY = (overlap / 2) * sin;
+                            
+                            ball1.x -= separateX;
+                            ball1.y -= separateY;
+                            ball2.x += separateX;
+                            ball2.y += separateY;
+                            
+                            // Calculate collision response
+                            const v1 = ball1.vx * cos + ball1.vy * sin;
+                            const v2 = ball2.vx * cos + ball2.vy * sin;
+                            
+                            const newV1 = v2 * this.bounceDamping;
+                            const newV2 = v1 * this.bounceDamping;
+                            
+                            ball1.vx = newV1 * cos - (ball1.vx * sin - ball1.vy * cos) * sin;
+                            ball1.vy = newV1 * sin + (ball1.vx * sin - ball1.vy * cos) * cos;
+                            ball2.vx = newV2 * cos - (ball2.vx * sin - ball2.vy * cos) * sin;
+                            ball2.vy = newV2 * sin + (ball2.vx * sin - ball2.vy * cos) * cos;
+                        }
+                    }
+                }
+            }
+            
+            render() {
+                // Clear canvas
+                this.ctx.fillStyle = 'rgba(0, 0, 0, 0.95)';
+                this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+                
+                // Draw all players
+                this.players.forEach((player) => {
+                    this.drawPlayer(player, player.id === this.playerId);
+                });
+            }
+            
+            drawPlayer(player, isCurrentPlayer) {
+                const ctx = this.ctx;
+                
+                // Draw velocity trail
+                if (Math.abs(player.vx) > 0.5 || Math.abs(player.vy) > 0.5) {
+                    ctx.strokeStyle = player.color + '40';
+                    ctx.lineWidth = 3;
+                    ctx.beginPath();
+                    ctx.moveTo(player.x, player.y);
+                    ctx.lineTo(player.x - player.vx * 3, player.y - player.vy * 3);
+                    ctx.stroke();
+                }
+                
+                // Draw glow for current player
+                if (isCurrentPlayer) {
+                    ctx.shadowColor = player.color;
+                    ctx.shadowBlur = 25;
+                }
+                
+                // Main ball
+                ctx.beginPath();
+                ctx.arc(player.x, player.y, this.ballRadius, 0, Math.PI * 2);
+                ctx.fillStyle = player.color;
+                ctx.fill();
+                
+                // Inner highlight
+                ctx.beginPath();
+                ctx.arc(player.x - 5, player.y - 5, this.ballRadius * 0.3, 0, Math.PI * 2);
+                ctx.fillStyle = 'rgba(255, 255, 255, 0.4)';
+                ctx.fill();
+                
+                // Border for current player
+                if (isCurrentPlayer) {
+                    ctx.strokeStyle = '#ffffff';
+                    ctx.lineWidth = 3;
+                    ctx.beginPath();
+                    ctx.arc(player.x, player.y, this.ballRadius + 3, 0, Math.PI * 2);
+                    ctx.stroke();
+                }
+                
+                ctx.shadowBlur = 0;
+            }
+            
+            gameLoop() {
+                this.updatePlayer();
+                this.updateBots();
+                this.handleBallCollisions();
+                this.render();
+                requestAnimationFrame(() => this.gameLoop());
+            }
+        }
+        
+        // Start the game when page loads
+        window.addEventListener('load', () => {
+            new MultiplayerBallGame();
+        });
+    </script>
+</body>
+</html>
